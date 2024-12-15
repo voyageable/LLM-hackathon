@@ -36,6 +36,46 @@ This project analyzes hotel reviews from a publicly available dataset to extract
 
 ---
 
+
+## 🗂️ Dataset Description
+
+The dataset contains hotel reviews and metadata sourced from [Jiwei Li et al. (2013)](http://www.cs.cmu.edu/~jiweil/html/hotel-review.html). Below is the structure of the dataset:
+
+| Column Name           | Description                                                                                  |
+|-----------------------|----------------------------------------------------------------------------------------------|
+| `hotel_id`            | Unique identifier for each hotel.                                                           |
+| `user_id`             | Unique identifier for the user who wrote the review.                                        |
+| `title`               | Title of the review.                                                                        |
+| `text`                | Full text of the review.                                                                    |
+| `review`              | Combined text: `title` + `text`.                                                            |
+| `overall`             | Overall rating given by the user (1-5 scale).                                               |
+| `cleanliness`         | Rating for cleanliness (1-5 scale).                                                         |
+| `value`               | Rating for value for money (1-5 scale).                                                     |
+| `location`            | Rating for location (1-5 scale).                                                            |
+| `rooms`               | Rating for the quality of rooms (1-5 scale).                                                |
+| `sleep_quality`       | Rating for sleep quality (1-5 scale).                                                       |
+| `service`             | Rating for service quality (1-5 scale).                                                     |
+| `date_stayed`         | Date when the user stayed at the hotel.                                                     |
+| `date`                | Date when the review was posted.                                                            |
+| `offering_id`         | Unique identifier for the hotel's offering.                                                 |
+| `num_helpful_votes`   | Number of votes indicating how helpful the review was.                                       |
+| `author.location`     | Location of the user who wrote the review.                                                  |
+| `mobility_related`    | (Derived) Whether the review mentions mobility/accessibility-related terms (True/False).     |
+| `mobility_keywords`   | (Derived) List of matched mobility-related keywords from the review.                        |
+| `sentiment_score`     | (Derived) Sentiment polarity score for the review (range: -1 to 1).                          |
+| `sentiment`           | (Derived) Sentiment classification: `positive`, `neutral`, or `negative`.                   |
+| `text_processed`      | (Derived) Cleaned and lemmatized version of the review text for analysis.                    |
+
+---
+
+## 🌟 Key Features
+- **Keyword Matching**: Extract and analyze mobility-related terms with a comprehensive keyword list.
+- **Sentiment Analysis**: Classify reviews into positive, neutral, or negative categories.
+- **Reusable Code**: Modularized functions for text preprocessing, sentiment analysis, and visualizations.
+- **Comprehensive Output**: Generate datasets, charts, and summaries for actionable insights.
+
+---
+
 ## 🛠️ Workflow Summary
 1. **Data Loading**: Load hotel reviews from a JSON file.
 2. **Top 50 Hotels**: Identify the top 50 hotels with the highest number of reviews.

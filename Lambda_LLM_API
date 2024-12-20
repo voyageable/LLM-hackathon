@@ -1,0 +1,257 @@
+// Configuration for Lambda API using Apps Script - this was not the preferred method.
+const LAMBDA_CONFIG = {
+  apiKey: 'YOUR_LAMBDA_API_KEY',  // Replace with your actual API key
+  baseUrl: 'https://api.lambdalabs.com/v1',
+  model: 'llama3.1-70b-instruct-berkeley'
+};
+
+// Sentiment analysis prompts and configurations
+const SENTIMENT_CONFIG = {
+  defaultPrompt: `Analyze the following review specifically for accessibility and mobility-related sentiments. 
+    Provide a structured response with:
+    1. Overall Sentiment (POSITIVE/NEGATIVE/NEUTRAL)
+    2. Confidence Score (0-1)
+    3. Key accessibility features mentioned
+    4. Areas of concern (if any)
+    Review: `,
+  
+  categories: {
+    mobility: ['wheelchair', 'ramp', 'elevator'],
+    vision: ['braille', 'audio guide', 'large print'],
+    hearing: ['sign language', 'hearing loop', 'visual alerts'],
+    cognitive: ['clear signage', 'simple layout', 'quiet spaces']
+  }
+};
+
+/**
+ * Creates and configures the Lambda API client
+ * @return {Object} Configured API client
+ */
+function createLambdaClient() {
+  return {
+    headers: {
+      'Authorization': `Bearer ${LAMBDA_CONFIG.apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    
+    /**
+     * Makes a request to the Lambda API
+     * @param {string} endpoint - API endpoint
+     * @param {Object} data - Request payload
+     * @return {Promise} API response
+     */
+    async request(endpoint, data) {
+      const url = `${LAMBDA_CONFIG.baseUrl}${endpoint}`;
+      try {
+        const response = await UrlFetchApp.fetch(url, {
+          method: 'POST',
+          headers: this.headers,
+          payload: JSON.stringify(data),
+          muteHttpExceptions: true
+        });
+        
+        return JSON.parse(response.getContentText());
+      } catch (error) {
+        Logger.log(`Lambda API Error: ${error.message}`);
+        throw error;
+      }
+    }
+  };
+}
+
+/**
+ * Analyzes accessibility sentiment in a review
+ * @param {string} review - The review text to analyze
+ * @return {Object} Sentiment analysis results
+ */
+async function analyzeAccessibilitySentiment(review) {
+  const client = createLambdaClient();
+  
+  const prompt = SENTIMENT_CONFIG.defaultPrompt + review;
+  
+  const requestData = {
+    model: LAMBDA_CONFIG.model,
+    prompt: prompt,
+    temperature: 0.3,  // Lower temperature for more consistent analysis
+    max_tokens: 500,
+    stop: ["\n\n"]  // Stop at double newline
+  };
+  
+  try {
+    const response = await client.request('/completions', requestData);
+    return parseAnalysisResponse(response, review);
+  } catch (error) {
+    Logger.log(`Sentiment Analysis Error: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * Parses and structures the LLM response
+ * @param {Object} response - Raw API response
+ * @param {string} originalReview - Original review text
+ * @return {Object} Structured analysis results
+ */
+function parseAnalysisResponse(response, originalReview) {
+  const result = {
+    timestamp: new Date().toISOString(),
+    originalReview: originalReview,
+    analysis: {
+      sentiment: 'UNKNOWN',
+      confidence: 0,
+      features: [],
+      concerns: []
+    },
+    raw_response: response
+  };
+  
+  try {
+    // Extract structured information from LLM response
+    const text = response.choices[0].text;
+    
+    // Parse sentiment
+    if (text.includes('POSITIVE')) result.analysis.sentiment = 'POSITIVE';
+    else if (text.includes('NEGATIVE')) result.analysis.sentiment = 'NEGATIVE';
+    else if (text.includes('NEUTRAL')) result.analysis.sentiment = 'NEUTRAL';
+    
+    // Parse confidence score
+    const confidenceMatch = text.match(/Confidence Score: (0\.\d+)/);
+    if (confidenceMatch) {
+      result.analysis.confidence = parseFloat(confidenceMatch[1]);
+    }
+    
+    // Extract features and concerns
+    result.analysis.features = extractFeatures(text);
+    result.analysis.concerns = extractConcerns(text);
+    
+  } catch (error) {
+    Logger.log(`Response Parsing Error: ${error.message}`);
+  }
+  
+  return result;
+}
+
+/**
+ * Extracts accessibility features from analysis text
+ * @param {string} text - Analysis text
+ * @return {Array} Extracted features
+ */
+function extractFeatures(text) {
+  const features = [];
+  
+  // Check for each category of accessibility features
+  for (const [category, keywords] of Object.entries(SENTIMENT_CONFIG.categories)) {
+    for (const keyword of keywords) {
+      if (text.toLowerCase().includes(keyword.toLowerCase())) {
+        features.push({
+          category: category,
+          feature: keyword,
+          context: extractContext(text, keyword)
+        });
+      }
+    }
+  }
+  
+  return features;
+}
+
+/**
+ * Extracts concerns from analysis text
+ * @param {string} text - Analysis text
+ * @return {Array} Extracted concerns
+ */
+function extractConcerns(text) {
+  const concerns = [];
+  
+  // Look for sections mentioning concerns or issues
+  const concernPatterns = [
+    /Areas of concern:([^.]+)/i,
+    /Issues identified:([^.]+)/i,
+    /Problems:([^.]+)/i
+  ];
+  
+  for (const pattern of concernPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      concerns.push(match[1].trim());
+    }
+  }
+  
+  return concerns;
+}
+
+/**
+ * Extracts context around a keyword
+ * @param {string} text - Full text
+ * @param {string} keyword - Keyword to find context for
+ * @return {string} Surrounding context
+ */
+function extractContext(text, keyword) {
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+  return sentences.find(sentence => 
+    sentence.toLowerCase().includes(keyword.toLowerCase())
+  ) || '';
+}
+
+/**
+ * Example usage function
+ */
+function testAccessibilityAnalysis() {
+  const sampleReview = `The hotel had a well-maintained wheelchair ramp at the entrance 
+    and spacious elevators. However, the bathroom didn't have adequate grab bars, and 
+    the shower wasn't roll-in accessible. The staff was very helpful with accessibility needs.`;
+  
+  const result = analyzeAccessibilitySentiment(sampleReview);
+  Logger.log(result);
+  
+  // Save to spreadsheet
+  saveAnalysisToSpreadsheet([result]);
+}
+
+/**
+ * Saves analysis results to spreadsheet
+ * @param {Array} results - Array of analysis results
+ */
+function saveAnalysisToSpreadsheet(results) {
+  const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_CONFIG.spreadsheetId);
+  let sheet = spreadsheet.getSheetByName('Accessibility Sentiment');
+  
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet('Accessibility Sentiment');
+    
+    // Create headers
+    sheet.getRange(1, 1, 1, 6).setValues([[
+      'Timestamp',
+      'Review',
+      'Sentiment',
+      'Confidence',
+      'Features',
+      'Concerns'
+    ]]);
+    
+    // Format header row
+    sheet.getRange(1, 1, 1, 6)
+      .setFontWeight('bold')
+      .setBackground('#E8EAED');
+    
+    sheet.setFrozenRows(1);
+  }
+  
+  // Prepare data
+  const data = results.map(result => [
+    result.timestamp,
+    result.originalReview,
+    result.analysis.sentiment,
+    result.analysis.confidence,
+    result.analysis.features.map(f => `${f.category}: ${f.feature}`).join('; '),
+    result.analysis.concerns.join('; ')
+  ]);
+  
+  // Append data
+  if (data.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, data.length, data[0].length)
+      .setValues(data);
+    
+    sheet.autoResizeColumns(1, 6);
+  }
+}

@@ -74,9 +74,9 @@ The dataset contains hotel reviews and metadata sourced from [Jiwei Li et al. (2
 - **Reusable Code**: Modularized functions for text preprocessing, sentiment analysis, and visualizations.
 - **Comprehensive Output**: Generate datasets, charts, and summaries for actionable insights.
 
-https://github.com/voyageable/LLM-hackathon/Hotel_accessibility_checker-submit_hotel.png
+https://raw.githubusercontent.com/voyageable/LLM-hackathon/refs/heads/main/Hotel_accessibility_checker-submit_hotel.png
 
-https://github.com/voyageable/LLM-hackathon/Hotel_accessibility_checker-report.png
+https://raw.githubusercontent.com/voyageable/LLM-hackathon/refs/heads/main/Hotel_accessibility_checker-report.png
 
 ---
 

@@ -1,257 +1,377 @@
-// Configuration for Lambda API
-const LAMBDA_CONFIG = {
-  apiKey: 'YOUR_LAMBDA_API_KEY',  // Replace with your actual API key
-  baseUrl: 'https://api.lambdalabs.com/v1',
-  model: 'llama3.1-70b-instruct-berkeley'
+// Configuration object for accessibility features to look for
+const ACCESSIBILITY_FEATURES = {
+  keywords: [
+    'wheelchair', 'accessible', 'elevator', 
+    'roll-in shower', 'ramp', 'handicap',
+    'ada compliant', 'mobility', 'disabled'
+  ],
+  selectors: [
+    'accessibility',
+    'amenities',
+    'facilities',
+    'room-features'
+  ]
 };
 
-// Sentiment analysis prompts and configurations
-const SENTIMENT_CONFIG = {
-  defaultPrompt: `Analyze the following review specifically for accessibility and mobility-related sentiments. 
-    Provide a structured response with:
-    1. Overall Sentiment (POSITIVE/NEGATIVE/NEUTRAL)
-    2. Confidence Score (0-1)
-    3. Key accessibility features mentioned
-    4. Areas of concern (if any)
-    Review: `,
-  
-  categories: {
-    mobility: ['wheelchair', 'ramp', 'elevator'],
-    vision: ['braille', 'audio guide', 'large print'],
-    hearing: ['sign language', 'hearing loop', 'visual alerts'],
-    cognitive: ['clear signage', 'simple layout', 'quiet spaces']
-  }
+// Configuration for spreadsheet
+const SPREADSHEET_CONFIG = {
+  spreadsheetId: '1jNu225GVzfJrvJIVw2DQ-qKhRDPgYOVUIifYeEEXhsw',
+  sheetName: 'Accessibility Data',
+  folderName: 'Hotel Accessibility Data'
 };
 
 /**
- * Creates and configures the Lambda API client
- * @return {Object} Configured API client
+ * Gets or creates a spreadsheet for storing results
+ * @return {SpreadsheetApp.Spreadsheet} The spreadsheet object
  */
-function createLambdaClient() {
-  return {
-    headers: {
-      'Authorization': `Bearer ${LAMBDA_CONFIG.apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    
-    /**
-     * Makes a request to the Lambda API
-     * @param {string} endpoint - API endpoint
-     * @param {Object} data - Request payload
-     * @return {Promise} API response
-     */
-    async request(endpoint, data) {
-      const url = `${LAMBDA_CONFIG.baseUrl}${endpoint}`;
-      try {
-        const response = await UrlFetchApp.fetch(url, {
-          method: 'POST',
-          headers: this.headers,
-          payload: JSON.stringify(data),
-          muteHttpExceptions: true
-        });
-        
-        return JSON.parse(response.getContentText());
-      } catch (error) {
-        Logger.log(`Lambda API Error: ${error.message}`);
-        throw error;
-      }
+function getOrCreateSpreadsheet() {
+  let spreadsheet;
+  
+  // If spreadsheet ID is provided, try to open it
+  if (SPREADSHEET_CONFIG.spreadsheetId) {
+    try {
+      spreadsheet = SpreadsheetApp.openById(SPREADSHEET_CONFIG.spreadsheetId);
+      Logger.log('Using existing spreadsheet: ' + spreadsheet.getName());
+      return spreadsheet;
+    } catch (error) {
+      Logger.log('Could not open specified spreadsheet: ' + error.message);
     }
-  };
+  }
+  
+  // Create new spreadsheet in the specified folder
+  let folder;
+  try {
+    // Try to find existing folder
+    const folders = DriveApp.getFoldersByName(SPREADSHEET_CONFIG.folderName);
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      // Create new folder if it doesn't exist
+      folder = DriveApp.createFolder(SPREADSHEET_CONFIG.folderName);
+    }
+    
+    // Create new spreadsheet
+    const fileName = 'Hotel Accessibility Data - ' + new Date().toISOString().split('T')[0];
+    spreadsheet = SpreadsheetApp.create(fileName);
+    
+    // Move to proper folder
+    const file = DriveApp.getFileById(spreadsheet.getId());
+    folder.addFile(file);
+    DriveApp.getRootFolder().removeFile(file);
+    
+    Logger.log('Created new spreadsheet: ' + fileName);
+    
+    // Update the configuration with the new spreadsheet ID
+    SPREADSHEET_CONFIG.spreadsheetId = spreadsheet.getId();
+    
+    return spreadsheet;
+  } catch (error) {
+    throw new Error('Failed to create spreadsheet: ' + error.message);
+  }
 }
 
 /**
- * Analyzes accessibility sentiment in a review
- * @param {string} review - The review text to analyze
- * @return {Object} Sentiment analysis results
+ * Main function to scrape hotel websites
+ * @param {Array} urls Array of hotel website URLs to scrape
+ * @return {Array} Array of objects containing scraped accessibility information
  */
-async function analyzeAccessibilitySentiment(review) {
-  const client = createLambdaClient();
+function scrapeHotelAccessibility(urls) {
+  const results = [];
   
-  const prompt = SENTIMENT_CONFIG.defaultPrompt + review;
+  for (const url of urls) {
+    try {
+      // Fetch webpage content
+      const response = fetchWebpage(url);
+      if (!response) continue;
+      
+      const accessibilityInfo = {
+        url: url,
+        timestamp: new Date().toISOString(),
+        features: extractAccessibilityFeatures(response),
+        rawText: extractRelevantText(response)
+      };
+      
+      results.push(accessibilityInfo);
+      
+      // Add small delay to avoid overloading servers
+      Utilities.sleep(1000);
+      
+    } catch (error) {
+      Logger.log(`Error scraping ${url}: ${error.message}`);
+      continue;
+    }
+  }
   
-  const requestData = {
-    model: LAMBDA_CONFIG.model,
-    prompt: prompt,
-    temperature: 0.3,  // Lower temperature for more consistent analysis
-    max_tokens: 500,
-    stop: ["\n\n"]  // Stop at double newline
-  };
-  
+  // Save results to spreadsheet
+  saveToSpreadsheet(results);
+  return results;
+}
+
+/**
+ * Fetches webpage content using UrlFetchApp
+ * @param {string} url URL to fetch
+ * @return {string} Webpage content
+ */
+function fetchWebpage(url) {
   try {
-    const response = await client.request('/completions', requestData);
-    return parseAnalysisResponse(response, review);
+    const options = {
+      'muteHttpExceptions': true,
+      'followRedirects': true,
+      'validateHttpsCertificates': true
+    };
+    
+    const response = UrlFetchApp.fetch(url, options);
+    if (response.getResponseCode() === 200) {
+      return response.getContentText();
+    }
+    Logger.log(`Failed to fetch ${url}: ${response.getResponseCode()}`);
+    return null;
   } catch (error) {
-    Logger.log(`Sentiment Analysis Error: ${error.message}`);
+    Logger.log(`Error fetching ${url}: ${error.message}`);
     return null;
   }
 }
 
 /**
- * Parses and structures the LLM response
- * @param {Object} response - Raw API response
- * @param {string} originalReview - Original review text
- * @return {Object} Structured analysis results
+ * Extracts accessibility features from webpage content
+ * @param {string} content Webpage content
+ * @return {Object} Found accessibility features
  */
-function parseAnalysisResponse(response, originalReview) {
-  const result = {
-    timestamp: new Date().toISOString(),
-    originalReview: originalReview,
-    analysis: {
-      sentiment: 'UNKNOWN',
-      confidence: 0,
-      features: [],
-      concerns: []
-    },
-    raw_response: response
+function extractAccessibilityFeatures(content) {
+  const features = {
+    wheelchairAccess: false,
+    elevator: false,
+    rollInShower: false,
+    ramps: false,
+    accessibleRoom: false,
+    carPark: false,
+    petsWelcome: false,
+    restaurant: false,
+    fitnessCenter: false,
+    wiFi: false,
+    airConditioning: false,
+    breakfast: false,
+    bar: false,
+    meetingRooms: false,
+    nonSmoking: false,
+    roomService: false,
+    other: []
   };
-  
-  try {
-    // Extract structured information from LLM response
-    const text = response.choices[0].text;
-    
-    // Parse sentiment
-    if (text.includes('POSITIVE')) result.analysis.sentiment = 'POSITIVE';
-    else if (text.includes('NEGATIVE')) result.analysis.sentiment = 'NEGATIVE';
-    else if (text.includes('NEUTRAL')) result.analysis.sentiment = 'NEUTRAL';
-    
-    // Parse confidence score
-    const confidenceMatch = text.match(/Confidence Score: (0\.\d+)/);
-    if (confidenceMatch) {
-      result.analysis.confidence = parseFloat(confidenceMatch[1]);
-    }
-    
-    // Extract features and concerns
-    result.analysis.features = extractFeatures(text);
-    result.analysis.concerns = extractConcerns(text);
-    
-  } catch (error) {
-    Logger.log(`Response Parsing Error: ${error.message}`);
-  }
-  
-  return result;
-}
 
-/**
- * Extracts accessibility features from analysis text
- * @param {string} text - Analysis text
- * @return {Array} Extracted features
- */
-function extractFeatures(text) {
-  const features = [];
-  
-  // Check for each category of accessibility features
-  for (const [category, keywords] of Object.entries(SENTIMENT_CONFIG.categories)) {
-    for (const keyword of keywords) {
-      if (text.toLowerCase().includes(keyword.toLowerCase())) {
-        features.push({
-          category: category,
-          feature: keyword,
-          context: extractContext(text, keyword)
-        });
+  const keywords = {
+    wheelchairAccess: ['wheelchair', 'wheelchair accessible', 'accessible'],
+    elevator: ['elevator', 'lift'],
+    rollInShower: ['roll-in shower', 'roll in shower', 'roll-in'],
+    ramps: ['ramp', 'ramps', 'accessible ramp'],
+    accessibleRoom: ['accessible room', 'mobility accessible', 'hearing accessible', 'mobility and hearing accessible'],
+    carPark: ['car park', 'parking'],
+    petsWelcome: ['pets welcome', 'pet-friendly', 'pets allowed'],
+    restaurant: ['restaurant', 'on-site restaurant'],
+    fitnessCenter: ['fitness center', 'gym', 'exercise room'],
+    wiFi: ['wi-fi', 'wifi', 'wireless internet'],
+    airConditioning: ['air conditioning', 'ac', 'air-conditioned'],
+    breakfast: ['breakfast', 'complimentary breakfast'],
+    bar: ['bar', 'lounge'],
+    meetingRooms: ['meeting rooms', 'conference room'],
+    nonSmoking: ['non smoking', 'smoke-free', '100% non smoking property'],
+    roomService: ['room service'],
+    other: ACCESSIBILITY_FEATURES.keywords
+  };
+
+  const lowerContent = content.toLowerCase();
+
+  const containsKeyword = (keywords) =>
+    keywords.some((keyword) => lowerContent.includes(keyword.toLowerCase()));
+
+  // Update features based on keyword matching
+  features.wheelchairAccess = containsKeyword(keywords.wheelchairAccess);
+  features.elevator = containsKeyword(keywords.elevator);
+  features.rollInShower = containsKeyword(keywords.rollInShower);
+  features.ramps = containsKeyword(keywords.ramps);
+  features.accessibleRoom = containsKeyword(keywords.accessibleRoom);
+  features.carPark = containsKeyword(keywords.carPark);
+  features.petsWelcome = containsKeyword(keywords.petsWelcome);
+  features.restaurant = containsKeyword(keywords.restaurant);
+  features.fitnessCenter = containsKeyword(keywords.fitnessCenter);
+  features.wiFi = containsKeyword(keywords.wiFi);
+  features.airConditioning = containsKeyword(keywords.airConditioning);
+  features.breakfast = containsKeyword(keywords.breakfast);
+  features.bar = containsKeyword(keywords.bar);
+  features.meetingRooms = containsKeyword(keywords.meetingRooms);
+  features.nonSmoking = containsKeyword(keywords.nonSmoking);
+  features.roomService = containsKeyword(keywords.roomService);
+
+  for (const keyword of keywords.other) {
+    if (lowerContent.includes(keyword.toLowerCase())) {
+      const sentence = extractSentenceWithKeyword(content, keyword);
+      if (sentence && !features.other.includes(sentence.trim())) {
+        features.other.push(sentence.trim());
       }
     }
   }
-  
+
   return features;
 }
 
 /**
- * Extracts concerns from analysis text
- * @param {string} text - Analysis text
- * @return {Array} Extracted concerns
+ * Extracts relevant text sections from webpage content
+ * @param {string} content Webpage content
+ * @return {string} Extracted relevant text
  */
-function extractConcerns(text) {
-  const concerns = [];
+function extractRelevantText(content) {
+  const relevantText = [];
   
-  // Look for sections mentioning concerns or issues
-  const concernPatterns = [
-    /Areas of concern:([^.]+)/i,
-    /Issues identified:([^.]+)/i,
-    /Problems:([^.]+)/i
-  ];
+  // Simple HTML parsing to extract text from relevant sections
+  const parser = new RegExp('<[^>]+>', 'g');
+  const cleanContent = content.replace(parser, ' ');
   
-  for (const pattern of concernPatterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      concerns.push(match[1].trim());
+  // Split into paragraphs and filter relevant ones
+  const paragraphs = cleanContent.split('\n');
+  for (const para of paragraphs) {
+    if (isRelevantParagraph(para)) {
+      relevantText.push(para.trim());
     }
   }
   
-  return concerns;
+  return relevantText.join('\n');
 }
 
 /**
- * Extracts context around a keyword
- * @param {string} text - Full text
- * @param {string} keyword - Keyword to find context for
- * @return {string} Surrounding context
+ * Checks if a paragraph contains relevant accessibility information
+ * @param {string} paragraph Text paragraph to check
+ * @return {boolean} True if paragraph is relevant
  */
-function extractContext(text, keyword) {
+function isRelevantParagraph(paragraph) {
+  const lowerPara = paragraph.toLowerCase().trim();
+  
+  // Skip empty or very short paragraphs
+  if (lowerPara.length < 10) return false;
+  
+  // Check if paragraph contains any keywords
+  return ACCESSIBILITY_FEATURES.keywords.some(keyword => 
+    lowerPara.includes(keyword)
+  );
+}
+
+/**
+ * Extracts the sentence containing a keyword
+ * @param {string} text Full text to search
+ * @param {string} keyword Keyword to find
+ * @return {string} Sentence containing keyword
+ */
+function extractSentenceWithKeyword(text, keyword) {
   const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
   return sentences.find(sentence => 
     sentence.toLowerCase().includes(keyword.toLowerCase())
-  ) || '';
+  );
+}
+
+/**
+ * Saves results to a Google Spreadsheet
+ * @param {Array} results Array of scraped results
+ */
+function saveToSpreadsheet(results) {
+  const spreadsheet = getOrCreateSpreadsheet();
+  let sheet = spreadsheet.getSheetByName(SPREADSHEET_CONFIG.sheetName);
+  
+  // Create sheet if it doesn't exist
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(SPREADSHEET_CONFIG.sheetName);
+  }
+  
+  // Create headers if sheet is empty
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 19).setValues([[
+      'URL',
+      'Timestamp',
+      'Wheelchair Access',
+      'Elevator',
+      'Roll-in Shower',
+      'Ramps',
+      'Accessible Room',
+      'Car Park',
+      'Pets Welcome',
+      'Restaurant',
+      'Fitness Center',
+      'Wi-Fi',
+      'Air Conditioning',
+      'Breakfast',
+      'Bar',
+      'Meeting Rooms',
+      'Non Smoking',
+      'Room Service',
+      'Other Features'
+    ]]);
+    
+    // Format header row
+    sheet.getRange(1, 1, 1, 19)
+      .setFontWeight('bold')
+      .setBackground('#E8EAED');
+    
+    // Freeze header row
+    sheet.setFrozenRows(1);
+  }
+  
+  // Prepare data for spreadsheet
+  const data = results.map(result => [
+    result.url,
+    result.timestamp,
+    result.features.wheelchairAccess,
+    result.features.elevator,
+    result.features.rollInShower,
+    result.features.ramps,
+    result.features.accessibleRoom,
+    result.features.carPark,
+    result.features.petsWelcome,
+    result.features.restaurant,
+    result.features.fitnessCenter,
+    result.features.wiFi,
+    result.features.airConditioning,
+    result.features.breakfast,
+    result.features.bar,
+    result.features.meetingRooms,
+    result.features.nonSmoking,
+    result.features.roomService,
+    result.features.other.join('; ')  // Joining 'other' features with a semicolon
+  ]);
+  
+  // Append data to sheet
+  if (data.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, data.length, data[0].length)
+      .setValues(data);
+    
+    // Auto-resize columns to fit content
+    sheet.autoResizeColumns(1, 19);
+  }
+  
+  // Log the spreadsheet URL
+  Logger.log('Results saved to: ' + spreadsheet.getUrl());
+}
+
+/**
+ * Test function to verify spreadsheet connection
+ */
+function testSpreadsheetConnection() {
+  try {
+    const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_CONFIG.spreadsheetId);
+    Logger.log('Successfully connected to spreadsheet: ' + spreadsheet.getName());
+    return true;
+  } catch (error) {
+    Logger.log('Error connecting to spreadsheet: ' + error.message);
+    return false;
+  }
 }
 
 /**
  * Example usage function
  */
-function testAccessibilityAnalysis() {
-  const sampleReview = `The hotel had a well-maintained wheelchair ramp at the entrance 
-    and spacious elevators. However, the bathroom didn't have adequate grab bars, and 
-    the shower wasn't roll-in accessible. The staff was very helpful with accessibility needs.`;
+function runScraper() {
+  const urls = [
+    'https://all.accor.com/hotel/8501/index.en.shtml',
+    'https://all.accor.com/hotel/2185/index.en.shtml',
+    'https://www.hilton.com/en/',
+    'https://sheraton.marriott.com/'
+  ];
   
-  const result = analyzeAccessibilitySentiment(sampleReview);
-  Logger.log(result);
-  
-  // Save to spreadsheet
-  saveAnalysisToSpreadsheet([result]);
-}
-
-/**
- * Saves analysis results to spreadsheet
- * @param {Array} results - Array of analysis results
- */
-function saveAnalysisToSpreadsheet(results) {
-  const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_CONFIG.spreadsheetId);
-  let sheet = spreadsheet.getSheetByName('Accessibility Sentiment');
-  
-  if (!sheet) {
-    sheet = spreadsheet.insertSheet('Accessibility Sentiment');
-    
-    // Create headers
-    sheet.getRange(1, 1, 1, 6).setValues([[
-      'Timestamp',
-      'Review',
-      'Sentiment',
-      'Confidence',
-      'Features',
-      'Concerns'
-    ]]);
-    
-    // Format header row
-    sheet.getRange(1, 1, 1, 6)
-      .setFontWeight('bold')
-      .setBackground('#E8EAED');
-    
-    sheet.setFrozenRows(1);
-  }
-  
-  // Prepare data
-  const data = results.map(result => [
-    result.timestamp,
-    result.originalReview,
-    result.analysis.sentiment,
-    result.analysis.confidence,
-    result.analysis.features.map(f => `${f.category}: ${f.feature}`).join('; '),
-    result.analysis.concerns.join('; ')
-  ]);
-  
-  // Append data
-  if (data.length > 0) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, data.length, data[0].length)
-      .setValues(data);
-    
-    sheet.autoResizeColumns(1, 6);
-  }
+  scrapeHotelAccessibility(urls);
 }

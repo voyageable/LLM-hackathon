@@ -87,14 +87,6 @@ The dataset contains hotel reviews and metadata sourced from [Jiwei Li et al. (2
 
 ---
 
-## 🌟 Key Features
-- **Keyword Matching**: Extract and analyze mobility-related terms with a comprehensive keyword list.
-- **Sentiment Analysis**: Classify reviews into positive, neutral, or negative categories.
-- **Reusable Code**: Modularized functions for text preprocessing, sentiment analysis, and visualizations.
-- **Comprehensive Output**: Generate datasets, charts, and summaries for actionable insights.
-
----
-
 ## 🖥️ Technologies Used
 - **Programming Language**: Python
 - **Libraries**:
